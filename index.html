@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Control Horario</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⏱️</text></svg>">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -47,14 +46,20 @@ button:hover{background:var(--pri2)}button.sec{background:var(--bg);color:var(--
 <div class="wrap" id="app"></div>
 <script>
 /* ====== CONFIGURACIÓN ====== */
-const SUPA_URL = "";   // https://humjwbihplkarlapicsx.supabase.co
-const SUPA_KEY = "";   // sb_publishable_PChVJWW5mWnKyYhCW7xv_g_dsQgunBv
+const SUPA_URL = "https://humjwbihplkarlapicsx.supabase.co";
+const SUPA_KEY = "sb_publishable_PChVJWW5mWnKyYhCW7xv_g_dsQgunBv";
 const ADMIN_PASS = "Hispanicapalacio";
 const EMPRESA = "Hispanica Palacio";
 /* ========================== */
 
 const $ = s => document.querySelector(s);
-const sb = (SUPA_URL && SUPA_KEY && window.supabase) ? supabase.createClient(SUPA_URL, SUPA_KEY) : null;
+const sb = !!(SUPA_URL && SUPA_KEY);
+const API = SUPA_URL + '/rest/v1/fichajes';
+async function rq(url,opt={}){
+  const r=await fetch(url,{...opt,headers:{apikey:SUPA_KEY,'Content-Type':'application/json',...(opt.headers||{})}});
+  if(!r.ok)throw new Error('Supabase '+r.status+': '+(await r.text()));
+  const t=await r.text();return t?JSON.parse(t):[];
+}
 const store = {
   get(k){try{return localStorage.getItem(k)}catch(e){return null}},
   set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
@@ -63,24 +68,24 @@ const mem={};
 const ss={get(k){try{return sessionStorage.getItem(k)}catch(e){return mem[k]||null}},set(k,v){mem[k]=v;try{sessionStorage.setItem(k,v)}catch(e){}},del(k){delete mem[k];try{sessionStorage.removeItem(k)}catch(e){}}};
 const db = {
   async list(){
-    if(sb){const {data,error}=await sb.from('fichajes').select('*').order('ts');if(error)throw error;return data}
+    if(sb){let all=[],o=0;for(;;){const p=await rq(`${API}?select=*&order=ts.asc,id.asc&limit=1000&offset=${o}`);all=all.concat(p);if(p.length<1000)break;o+=1000}return all}
     try{return JSON.parse(store.get('fichajes')||'[]')}catch(e){return []}
   },
   async add(r){
-    if(sb){const {error}=await sb.from('fichajes').insert(r);if(error)throw error;return}
+    if(sb){await rq(API,{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(r)});return}
     const l=await db.list();l.push({...r,id:Date.now()+Math.random()});store.set('fichajes',JSON.stringify(l))
   },
   async del(id){
-    if(sb){const {data,error}=await sb.from('fichajes').delete().eq('id',id).select();if(error)throw error;if(!data||!data.length)throw new Error('Supabase no permitió borrar. Vuelve a ejecutar supabase.sql (política "borrar").');return}
+    if(sb){const d=await rq(`${API}?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',headers:{Prefer:'return=representation'}});if(!d.length)throw new Error('Supabase no permitió borrar. Revisa las políticas de la tabla fichajes.');return}
     store.set('fichajes',JSON.stringify((await db.list()).filter(x=>x.id!=id)))
   },
   async rename(a,b){
-    if(sb){const {error}=await sb.from('fichajes').update({nombre:b}).eq('nombre',a);if(error)throw error;return}
+    if(sb){await rq(`${API}?nombre=eq.${encodeURIComponent(a)}`,{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({nombre:b})});return}
     store.set('fichajes',JSON.stringify((await db.list()).map(x=>x.nombre===a?{...x,nombre:b}:x)))
   },
   async purge(){ /* borra fichajes de más de 3 meses */
     const c=new Date();c.setMonth(c.getMonth()-3);const iso=c.toISOString();
-    if(sb){await sb.from('fichajes').delete().lt('ts',iso);return}
+    if(sb){await rq(`${API}?ts=lt.${encodeURIComponent(iso)}`,{method:'DELETE',headers:{Prefer:'return=minimal'}});return}
     store.set('fichajes',JSON.stringify((await db.list()).filter(x=>x.ts>=iso)))
   }
 };
